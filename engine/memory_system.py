@@ -38,7 +38,6 @@ def create_embedding(text: str) -> np.ndarray:
         model_output = model(**encoded_input)
 
     sentence_embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
-    
     sentence_embeddings = torch.nn.functional.normalize(sentence_embeddings, p=2, dim=1)
     
     return sentence_embeddings[0].cpu().numpy()
@@ -84,37 +83,21 @@ class SemanticMemory(BaseMemory):
     def get_all_facts(self):
         return self.data.copy()
 
-class MetaMemory(BaseMemory):
-    def __init__(self, directory: Path):
-        super().__init__(directory / "meta.json", default_content="Ini adalah ringkasan global dari interaksi Asta. Kosong saat ini.")
-        # Ensure data is always a string
-        if not isinstance(self.data, str):
-            self.data = self._default_content
-            self.save()
-
-    def get_meta(self) -> str:
-        return self.data
-
-    def set_meta(self, new_meta: str):
-        self.data = new_meta
-        self.save()
-
 class EpisodicMemory(BaseMemory):
     def __init__(self, directory: Path):
         super().__init__(directory / "episodic.json", default_content=[])
 
-    def add(self, session_summary: str, raw_conversation: list):
-        # Embed the session summary, not the raw conversation
-        embedding = create_embedding(session_summary).tolist()
+    def add(self, conversation: list):
+        text_conversation = " ".join(f"{m['role']}: {m['content']}" for m in conversation)
+        embedding = create_embedding(text_conversation).tolist()
         timestamp = datetime.datetime.now().isoformat()
 
         self.data.append({
             "timestamp": timestamp,
-            "session_summary": session_summary, # Store the summary
-            "raw_conversation": raw_conversation, # Store raw conversation for context (if needed later)
+            "conversation": conversation,
             "embedding": embedding
         })
-        print("[Episodic Memory] Menambahkan ringkasan sesi baru.")
+        print("[Episodic Memory] Menambahkan percakapan baru.")
         self.save()
 
     def search(self, query: str, top_k: int = 3, threshold: float = 0.1):
@@ -139,3 +122,20 @@ class EpisodicMemory(BaseMemory):
             print(f"[Episodic Memory] Menemukan {len(results)} memori relevan.")
         
         return results
+
+    def get_last_n_sessions(self, n: int = 4):
+        return self.data[-n:]
+
+class CoreMemory(BaseMemory):
+    def __init__(self, directory: Path):
+        super().__init__(directory / "core_memory.json", default_content={"summary": ""})
+
+    def get_summary(self) -> str:
+        return self.data.get("summary", "")
+
+    def update_summary(self, summary_text: str):
+        if self.data.get("summary") != summary_text:
+            print(f"[Core Memory] Memperbarui ringkasan inti memori.")
+            self.data["summary"] = summary_text
+            self.save()
+

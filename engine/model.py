@@ -1,12 +1,16 @@
 import llama_cpp
 from llama_cpp.llama_tokenizer import LlamaHFTokenizer
 import os
+import sys
+import contextlib
+import io
+from utils.spinner import Spinner
 
 BASE_MODEL_PATH = "./model"
 
 MODELS = {
     "1": {
-        "name": "Sailor2 3B (ringan)",
+        "name": "Sailor2 3B (lebih bodoh, lebih ringan)",
         "model_path": os.path.join(
             BASE_MODEL_PATH,
             "Sailor2-3B",
@@ -33,7 +37,14 @@ MODELS = {
     },
 }
 
-LORA_ADAPTER_PATH = "model/Sailor2-8B-LoRA-Persona/adapter_persona.gguf"
+"""
+adapter_casual_plus.gguf
+adapter_love.gguf
+adapter_persona.gguf
+adapter_persona_casual_plus.gguf
+adapter_persona_love.gguf
+"""
+LORA_ADAPTER_PATH = "model/LoRA-all-adapter/adapter_persona_love_half.gguf"
 
 def choose_lora_adapter():
     while True:
@@ -70,10 +81,8 @@ class ChatManager:
         templated_string = ""
         for message in messages:
             templated_string += f"<|im_start|>{message['role']}\n{message['content']}<|im_end|>\n"
-        # Menambahkan token prompt generasi jika ada
-        templated_string += "<|im_start|>assistant\n" # Untuk mengestimasi token yang akan dikirim ke model
+        templated_string += "<|im_start|>assistant\n" 
 
-        # Menggunakan tokenizer internal llama untuk mendapatkan ID token
         tokens = self.llama.tokenize(templated_string.encode("utf-8"))
         return len(tokens)
 
@@ -99,12 +108,17 @@ class ChatManager:
             else:
                 break
         
-        # Hitung jumlah token aktual yang akan dikirim
         final_token_count = self._count_tokens(messages_to_send)
         print(f"[Info] Mengirim {final_token_count} token ke model.")
+        sys.stdout.flush()
+        # sys.stdout.write("\n") # Ensure spinner starts on a new, clean line
+        # sys.stdout.flush()
+
+        spinner = Spinner() # Using default joke messages
+        spinner.start()
 
         response_stream = self.llama.create_chat_completion(
-            messages=messages_to_send, # Gunakan riwayat yang telah dipotong
+            messages=messages_to_send,
             max_tokens=128,
             temperature=0.7,
             top_p=0.85,
@@ -114,14 +128,22 @@ class ChatManager:
         )
 
         full_response = ""
+        first_chunk = True
         for chunk in response_stream:
+            if first_chunk:
+                spinner.stop() # Stops spinner and clears its line
+                sys.stdout.write("Asta: ") # Prints "Asta: " on the cleared line
+                sys.stdout.flush()
+                first_chunk = False
             delta = chunk['choices'][0]['delta']
             if 'content' in delta:
                 text = delta['content']
-                print(text, end="", flush=True)
+                sys.stdout.write(text)
+                sys.stdout.flush()
                 full_response += text
         
-        print("\n")
+        sys.stdout.write("\n") # Prints a newline after the full response
+        sys.stdout.flush()
         self.history.append({"role": "assistant", "content": full_response})
         return full_response
 
@@ -158,7 +180,7 @@ def load_model(system_prompt: str):
     if lora_path and config["name"] != MODELS["2"]["name"]:
         print(f"\nPeringatan: Adaptor LoRA '{os.path.basename(lora_path)}' dirancang untuk model Sailor2 8B.")
         print(f"Secara otomatis memilih model Sailor2 8B.")
-        choice = "2" # Force selection to Sailor2 8B
+        choice = "2"
         config = MODELS[choice]
         # Re-check model path after changing config
         if not os.path.exists(config["model_path"]):
@@ -185,20 +207,23 @@ def load_model(system_prompt: str):
         config["tokenizer_path"]
     )
 
-    llama = llama_cpp.Llama(
-        model_path=config["model_path"],
-        tokenizer=tokenizer,
-        n_gpu_layers=n_gpu_layers,
-        n_threads=n_threads,
-        n_batch=1024,
-        use_mmap=True,
-        use_mlock=True,
-        n_ctx=4096,
-        verbose=False, # Mengubah dari False menjadi True
-        lora_path=lora_path,
-        lora_scale=1.5,
-        lora_n_gpu_layers=lora_n_gpu_layers, # Pass LoRA GPU layers here
-    )
+    # Suppress stderr output during llama_cpp.Llama initialization
+    with contextlib.redirect_stderr(io.StringIO()):
+        llama = llama_cpp.Llama(
+            model_path=config["model_path"],
+            tokenizer=tokenizer,
+            n_gpu_layers=n_gpu_layers,
+            n_threads=n_threads,
+            n_batch=1024,
+            use_mmap=True,
+            use_mlock=True,
+            n_ctx=8192,
+            verbose=False,
+            lora_path=lora_path,
+            lora_scale=1.5,
+            lora_n_gpu_layers=lora_n_gpu_layers,
+            log_level=0, # Attempt to suppress verbose logging from llama.cpp
+        )
     
     print("Model siap digunakan!\n")
     
